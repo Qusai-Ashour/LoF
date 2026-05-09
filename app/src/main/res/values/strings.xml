@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">LoF</string>
+    <string name="snapshot_widget_name">Today Snapshot</string>
+    <string name="snapshot_widget_description">Shows today progress across all categories</string>
+    <string name="mini_tracker_name">Mini Tracker</string>
+    <string name="mini_tracker_description">Weekly tracker for one category</string>
+</resources>

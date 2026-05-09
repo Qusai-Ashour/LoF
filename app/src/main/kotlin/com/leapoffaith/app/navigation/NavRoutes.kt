@@ -1,0 +1,20 @@
+package com.leapoffaith.app.navigation
+object NavRoutes {
+    const val WHO_ARE_YOU    = "who_are_you"
+    const val HOME           = "home"
+    const val VISUAL_TRACKER = "visual_tracker"
+    const val PREPARE        = "prepare"
+    const val RECORD         = "record"
+    const val HISTORY        = "history"
+    const val HISTORY_EDIT   = "history_edit"
+    const val CALENDAR       = "calendar"
+    const val TOMORROW_PLAN  = "tomorrow_plan"
+    const val WEEK_MEAL_PLAN = "week_meal_plan"
+    const val PRAYERS        = "prayers"
+    const val PLANK          = "plank"
+    const val TODAY_TASKS    = "today_tasks"
+    const val RECORD_CUSTOM  = "record_custom/{categoryId}"
+    const val PREPARE_CUSTOM = "prepare_custom/{categoryId}"
+    fun recordCustomRoute(id: Long)  = "record_custom/$id"
+    fun prepareCustomRoute(id: Long) = "prepare_custom/$id"
+}
