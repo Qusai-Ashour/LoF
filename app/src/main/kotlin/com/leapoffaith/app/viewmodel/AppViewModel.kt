@@ -78,6 +78,7 @@ class AppViewModel(
             _isDarkTheme.value  = prefs[DARK_THEME_KEY]  ?: true
             _widgetUser.value   = prefs[WIDGET_USER_KEY] ?: "qusai"
             _userAccentHex.value = getAccentForUser(_currentUser.value)
+            if (_currentUser.value.isNotEmpty()) loadHomePrefs(_currentUser.value)
             _isLoaded.value = true
             // Continue collecting updates
             context.dataStore.data.collect { p ->
@@ -95,6 +96,9 @@ class AppViewModel(
         context.dataStore.edit { it[USER_KEY] = userId }
         _userAccentHex.value = getAccentForUser(userId)
         triggerWidgetUpdate()
+        loadHomePrefs(userId)
+        ensureBuiltinPrepCategories()
+        fixBuiltinEmojis()
     }
 
     fun toggleTheme() = viewModelScope.launch {
@@ -137,7 +141,7 @@ class AppViewModel(
     fun addCategory(
         name: String, emoji: String, type: String, color: String,
         frequency: String = "ONCE_DAILY", subItems: String = "",
-        prepareFrequency: String = "", showInWidget: Boolean = false, isInMiniTracker: Boolean = false
+        prepareFrequency: String = "", isFixed: Boolean = true, showInWidget: Boolean = false, isInMiniTracker: Boolean = false
     ) = viewModelScope.launch {
         val existing = repository.getAllCategoriesOnce(_currentUser.value)
         val nextOrder = existing.filter { it.type == type }.size
@@ -154,7 +158,7 @@ class AppViewModel(
             userId = _currentUser.value, name = name, emoji = emoji,
             type = type, color = color, frequency = frequency,
             subItems = subItems, prepareFrequency = prepareFrequency,
-            showInWidget = showInWidget, isInMiniTracker = isInMiniTracker,
+            isFixed = isFixed, showInWidget = showInWidget, isInMiniTracker = isInMiniTracker,
             orderIndex = nextOrder
         ))
     }
@@ -205,14 +209,17 @@ class AppViewModel(
     fun deleteCategory(cat: com.leapoffaith.app.data.entities.CategoryDefinition) = viewModelScope.launch {
         val uid = _currentUser.value
         val all = repository.getAllCategoriesOnce(uid)
-        // Delete the linked counterpart (PREPARE deletes RECORD partner and vice versa)
         val partner = if (cat.type == "PREPARE")
             all.find { it.type == "RECORD" && it.name == cat.name }
         else
             all.find { it.type == "PREPARE" && it.name == cat.name }
+        // ── Stamp category name into all entries before deletion (so DeadHabits shows name) ──
+        val idsToStamp = listOfNotNull(cat.id, partner?.id)
+        val entries = repository.getCustomEntriesByDateRangeOnce(uid, "2020-01-01", today())
+        entries.filter { it.categoryId in idsToStamp && it.notes.isBlank() }
+            .forEach { repository.updateCustomEntry(it.copy(notes = cat.name)) }
         partner?.let { repository.deleteCategoryById(it.id) }
         repository.deleteCategoryById(cat.id)
-        // data entries preserved for history
     }
 
     private suspend fun seedDefaultCategories(userId: String) {
@@ -307,7 +314,7 @@ class AppViewModel(
 
     // ── Custom entries ────────────────────────────────────────────────────────
     fun getCustomEntryFlow(categoryId: Long, subKey: String = "") =
-        repository.getCustomEntry(_currentUser.value, categoryId, today(), subKey)
+        repository.getCustomEntryFlow(_currentUser.value, categoryId, today(), subKey)
 
     fun getCustomEntriesForCategoryDate(categoryId: Long) =
         repository.getCustomEntriesForCategory(_currentUser.value, categoryId, today())
@@ -477,4 +484,140 @@ customEntries = run {
             @Suppress("UNCHECKED_CAST") return AppViewModel(repo, ctx) as T
         }
     }
+
+    val buriedEntries: kotlinx.coroutines.flow.StateFlow<List<com.leapoffaith.app.data.entities.CustomEntry>> =
+        _currentUser.flatMapLatest { uid ->
+            if (uid.isEmpty()) kotlinx.coroutines.flow.flowOf(emptyList())
+            else repository.getBuriedEntries(uid)
+        }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun deleteBuriedHabit(entries: List<com.leapoffaith.app.data.entities.CustomEntry>) = viewModelScope.launch {
+        entries.forEach { repository.deleteCustomEntry(it) }
+    }
+
+    fun clearBuriedEntries() = viewModelScope.launch {
+        val uid = _currentUser.value
+        val ids = repository.getAllCategoriesOnce(uid).map { it.id }.toSet()
+        repository.getCustomEntriesByDateRangeOnce(uid, "2020-01-01", today())
+            .filter { it.categoryId !in ids }.forEach { repository.deleteCustomEntry(it) }
+    }
+
+    fun syncLinkedCategory(cat: com.leapoffaith.app.data.entities.CategoryDefinition) = viewModelScope.launch {
+        val uid = _currentUser.value
+        val linked = repository.getAllCategoriesOnce(uid).firstOrNull { it.name == cat.name && it.id != cat.id } ?: return@launch
+        repository.updateCategory(linked.copy(subItems = cat.subItems, isFixed = cat.isFixed))
+    }
+
+    fun restoreBuiltin(builtinType: String) = viewModelScope.launch {
+        val uid = _currentUser.value
+        if (repository.getAllCategoriesOnce(uid).any { it.builtinType == builtinType }) return@launch
+        val cat = when (builtinType) {
+            "TOMORROW_TASKS" -> com.leapoffaith.app.data.entities.CategoryDefinition(userId=uid, name="Tomorrow Tasks", emoji="📋", type="PREPARE", builtinType="TOMORROW_TASKS", orderIndex=0, prepareFrequency="NEXT_DAY")
+            "WEEK_MEALS"     -> com.leapoffaith.app.data.entities.CategoryDefinition(userId=uid, name="Week Meal Plan", emoji="🍴", type="PREPARE", builtinType="WEEK_MEALS",     orderIndex=1, prepareFrequency="NEXT_WEEK")
+            "GYM_SPLIT"      -> com.leapoffaith.app.data.entities.CategoryDefinition(userId=uid, name="Gym Split",      emoji="🏋",  type="PREPARE", builtinType="GYM_SPLIT",      orderIndex=2, prepareFrequency="NEXT_WEEK")
+            "PLANK_PREP"     -> com.leapoffaith.app.data.entities.CategoryDefinition(userId=uid, name="Plank",          emoji="💪", type="PREPARE", builtinType="PLANK_PREP",     orderIndex=3)
+            "PRAYERS_PREP"   -> com.leapoffaith.app.data.entities.CategoryDefinition(userId=uid, name="Daily Prayers",  emoji="🌙", type="PREPARE", builtinType="PRAYERS_PREP",   orderIndex=4)
+            "PRAYERS"        -> com.leapoffaith.app.data.entities.CategoryDefinition(userId=uid, name="Daily Prayers",  emoji="🌙", type="RECORD",  builtinType="PRAYERS",         orderIndex=1)
+            "PLANK"          -> com.leapoffaith.app.data.entities.CategoryDefinition(userId=uid, name="Plank",          emoji="💪", type="RECORD",  builtinType="PLANK",           orderIndex=2)
+            "TASKS"          -> com.leapoffaith.app.data.entities.CategoryDefinition(userId=uid, name="Today Tasks",    emoji="✅",  type="RECORD",  builtinType="TASKS",           orderIndex=0)
+            else -> return@launch
+        }
+        repository.insertCategory(cat)
+    }
+
+
+    private val _affirmations = MutableStateFlow<List<String>>(loadAffirmationsSync())
+    val affirmations: kotlinx.coroutines.flow.StateFlow<List<String>> = _affirmations.asStateFlow()
+    private fun loadAffirmationsSync(): List<String> {
+        val j = context.getSharedPreferences("lof_data", android.content.Context.MODE_PRIVATE).getString("affirmations","[]")?:"[]"
+        return try { val a=org.json.JSONArray(j); (0 until a.length()).map{a.getString(it)} } catch(_:Exception){emptyList()}
+    }
+    fun addAffirmation(text: String) { val n=_affirmations.value+text; _affirmations.value=n; saveAffirmations(n) }
+    fun deleteAffirmation(index: Int) { val n=_affirmations.value.toMutableList().also{if(index<it.size)it.removeAt(index)}; _affirmations.value=n; saveAffirmations(n) }
+    private fun saveAffirmations(list: List<String>) {
+        val a=org.json.JSONArray(); list.forEach{a.put(it)}
+        context.getSharedPreferences("lof_data",android.content.Context.MODE_PRIVATE).edit().putString("affirmations",a.toString()).apply()
+        triggerWidgetUpdate()
+    }
+
+
+    fun addMissingPrayerDay(date: String) = viewModelScope.launch {
+        val uid = _currentUser.value; if (uid.isEmpty()) return@launch
+        val existing = repository.getPrayersByDateRangeOnce(uid, date, date)
+        if (existing.isNotEmpty()) return@launch
+        repository.insertPrayer(com.leapoffaith.app.data.entities.PrayerEntry(
+            userId = uid, date = date,
+            fajr = false, dhuhr = false, asr = false, maghrib = false, isha = false))
+    }
+    fun addMissingPlankDay(date: String) = viewModelScope.launch {
+        val uid = _currentUser.value; if (uid.isEmpty()) return@launch
+        val existing = repository.getPlanksByDateRangeOnce(uid, date, date)
+        if (existing.isNotEmpty()) return@launch
+        repository.insertPlank(com.leapoffaith.app.data.entities.PlankEntry(
+            userId = uid, date = date, completed = false))
+    }
+    fun addMissingCustomDay(categoryId: Long, date: String, subKey: String = "") = viewModelScope.launch {
+        val uid = _currentUser.value; if (uid.isEmpty()) return@launch
+        val existing = repository.getCustomEntriesByDateRangeOnce(uid, date, date)
+            .firstOrNull { it.categoryId == categoryId && it.subItemKey == subKey }
+        if (existing != null) return@launch
+        repository.insertCustomEntry(com.leapoffaith.app.data.entities.CustomEntry(
+            userId = uid, categoryId = categoryId, date = date,
+            isDone = false, subItemKey = subKey))
+    }
+
+    fun unlinkRecordCategory(name: String) = viewModelScope.launch {
+        val uid = _currentUser.value
+        repository.getAllCategoriesOnce(uid)
+            .firstOrNull { it.type == "RECORD" && it.name == name }
+            ?.let { repository.deleteCategoryById(it.id) }
+    }
+
+
+    // ── Home preferences (per user) ────────────────────────────────────────
+    private val _showSnapshot     = MutableStateFlow(true)
+    private val _showAffirmations = MutableStateFlow(true)
+    val showSnapshot:     kotlinx.coroutines.flow.StateFlow<Boolean> = _showSnapshot.asStateFlow()
+    val showAffirmations: kotlinx.coroutines.flow.StateFlow<Boolean> = _showAffirmations.asStateFlow()
+
+    private fun loadHomePrefs(uid: String) {
+        val p = context.getSharedPreferences("lof_home_prefs", android.content.Context.MODE_PRIVATE)
+        _showSnapshot.value     = p.getBoolean("${uid}_show_snapshot",     true)
+        _showAffirmations.value = p.getBoolean("${uid}_show_affirmations", true)
+    }
+    fun toggleShowSnapshot() {
+        val uid = _currentUser.value
+        val v = !_showSnapshot.value; _showSnapshot.value = v
+        context.getSharedPreferences("lof_home_prefs", android.content.Context.MODE_PRIVATE)
+            .edit().putBoolean("${uid}_show_snapshot", v).apply()
+    }
+    fun toggleShowAffirmations() {
+        val uid = _currentUser.value
+        val v = !_showAffirmations.value; _showAffirmations.value = v
+        context.getSharedPreferences("lof_home_prefs", android.content.Context.MODE_PRIVATE)
+            .edit().putBoolean("${uid}_show_affirmations", v).apply()
+    }
+
+    fun ensureBuiltinPrepCategories() = viewModelScope.launch {
+        val uid=_currentUser.value; if(uid.isEmpty()) return@launch
+        val ex=repository.getAllCategoriesOnce(uid).map{it.builtinType}.toSet()
+        listOf("PLANK_PREP","PRAYERS_PREP").filter{it !in ex}.forEach{restoreBuiltin(it)}
+    }
+    fun fixBuiltinEmojis() = viewModelScope.launch {
+        val uid=_currentUser.value; if(uid.isEmpty()) return@launch
+        repository.getAllCategoriesOnce(uid).forEach{cat->
+            val e=when(cat.builtinType){"PLANK","PLANK_PREP"->"💪";"PRAYERS","PRAYERS_PREP"->"🌙";"TOMORROW_TASKS"->"📋";"WEEK_MEALS"->"🍴";"GYM_SPLIT"->"🏋";else->null}
+            if(e!=null && cat.emoji != e) repository.updateCategory(cat.copy(emoji=e))
+        }
+    }
+    fun reimportPreviousPeriod(categoryId: Long, prepFreq: String) = viewModelScope.launch {
+        val uid=_currentUser.value; val td=java.time.LocalDate.now()
+        val fri=td.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.FRIDAY))
+        when(prepFreq){
+            "TODAY"->{ val p=td.minusDays(1).format(fmt); repository.getCustomEntriesByDateRangeOnce(uid,p,p).filter{it.categoryId==categoryId}.forEach{repository.insertCustomEntry(it.copy(id=0,date=today(),isDone=false))} }
+            "NEXT_DAY"->{ repository.getCustomEntriesByDateRangeOnce(uid,today(),today()).filter{it.categoryId==categoryId}.forEach{repository.insertCustomEntry(it.copy(id=0,date=tomorrow(),isDone=false))} }
+            "NEXT_WEEK"->{ val pf=fri.minusWeeks(1); (0..6).forEach{i->val from=pf.plusDays(i.toLong()).format(fmt);val to=fri.plusDays(i.toLong()).format(fmt);repository.getCustomEntriesByDateRangeOnce(uid,from,from).filter{it.categoryId==categoryId}.forEach{repository.insertCustomEntry(it.copy(id=0,date=to,isDone=false))}} }
+        }
+    }
+
 }

@@ -25,6 +25,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Store route from widget intent
+        val intentRoute = intent?.getStringExtra("route")
         enableEdgeToEdge()
 
         val db = AppDatabase.getInstance(this)
@@ -43,11 +45,12 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
+            val startRoute = intentRoute
             val isDark by viewModel.isDarkTheme.collectAsState()
             LeapOfFaithTheme(darkTheme = isDark) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     val navController = rememberNavController()
-                    NavGraph(navController = navController, viewModel = viewModel)
+                    NavGraph(navController = navController, viewModel = viewModel, startRoute = startRoute)
                 }
             }
         }

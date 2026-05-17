@@ -53,5 +53,16 @@
         android:resource="@xml/file_paths" />
 </provider>
         
+        <receiver
+            android:name=".ui.widgets.AffirmationsWidgetReceiver"
+            android:exported="true"
+            android:label="Daily Affirmations">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/affirmations_widget_info" />
+        </receiver>
     </application>
 </manifest>

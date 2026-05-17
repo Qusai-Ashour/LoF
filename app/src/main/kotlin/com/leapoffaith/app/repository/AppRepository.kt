@@ -57,20 +57,33 @@ class AppRepository(
     suspend fun deleteCategoryById(id: Long)                          = categoryDao.deleteCategoryById(id)
 
     // Custom Entries
-    fun getCustomEntry(uid: String, catId: Long, date: String, sub: String = "") =
+    fun getCustomEntryFlow(uid: String, catId: Long, date: String, sub: String = "") =
         customEntryDao.getEntry(uid, catId, date, sub)
+
+    suspend fun getCustomEntry(uid: String, catId: Long, date: String, sub: String = "") =
+        customEntryDao.getEntryOnce(uid, catId, date, sub)
     suspend fun getCustomEntryOnce(uid: String, catId: Long, date: String, sub: String = "") =
         customEntryDao.getEntryOnce(uid, catId, date, sub)
     fun getPrepareItems(userId: String, catId: Long) =
-        customEntryDao.getPrepareItems(userId, catId)
+        customEntryDao.getEntriesForCategory(catId)
 
     fun getCustomEntriesForCategory(uid: String, catId: Long, date: String) =
         customEntryDao.getEntriesForCategoryDate(uid, catId, date)
 
-    suspend fun getCustomEntriesForCategoryOnce(uid: String, catId: Long, date: String) =
+    fun getCustomEntriesForCategoryOnce(uid: String, catId: Long, date: String) =
         customEntryDao.getEntriesForCategoryDate(uid, catId, date)
+    suspend fun customEntryDao_getByDateOnce(uid: String, catId: Long, date: String) =
+        customEntryDao.getEntriesForCategoryDate(uid, catId, date).let {
+            customEntryDao.getEntriesForDateOnce(uid, date).filter { e -> e.categoryId == catId }
+        }
+
     suspend fun getCustomEntriesForDateOnce(uid: String, date: String) =
         customEntryDao.getEntriesForDateOnce(uid, date)
+    suspend fun deleteUndoneEntriesBefore(uid: String, categoryIds: List<Long>, date: String) =
+        customEntryDao.deleteUndoneEntriesBefore(uid, categoryIds, date)
+
+    fun getBuriedEntries(uid: String) = customEntryDao.getBuriedEntries(uid)
+
     fun getCustomEntriesForDate(uid: String, date: String) =
         customEntryDao.getEntriesForDate(uid, date)
 
@@ -79,9 +92,9 @@ class AppRepository(
     suspend fun getCustomEntriesByDateRangeOnce(uid: String, s: String, e: String) =
         customEntryDao.getEntriesByDateRangeOnce(uid, s, e)
     fun getAllEntriesForCategory(uid: String, catId: Long) =
-        customEntryDao.getEntriesForCategory(uid, catId)
+        customEntryDao.getEntriesForCategory(catId)
     suspend fun insertCustomEntry(e: CustomEntry)                     = customEntryDao.insertEntry(e)
     suspend fun updateCustomEntry(e: CustomEntry)                     = customEntryDao.updateEntry(e)
     suspend fun deleteCustomEntry(e: CustomEntry)                     = customEntryDao.deleteEntry(e)
-    suspend fun deleteEntriesForCategory(catId: Long)                 = customEntryDao.deleteEntriesForCategory(catId)
+    suspend fun deleteEntriesForCategory(catId: Long)                 = customEntryDao.deleteAllForCategory(catId)
 }

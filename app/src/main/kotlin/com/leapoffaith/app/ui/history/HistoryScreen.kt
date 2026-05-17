@@ -27,6 +27,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import com.leapoffaith.app.data.entities.*
+import com.leapoffaith.app.data.entities.CustomEntry
+import com.leapoffaith.app.navigation.NavRoutes
 import com.leapoffaith.app.ui.prepare.parseColor
 import com.leapoffaith.app.ui.theme.*
 import com.leapoffaith.app.viewmodel.AppViewModel
@@ -36,12 +38,13 @@ import java.time.format.DateTimeFormatter
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HistoryScreen(viewModel: AppViewModel, editMode: Boolean = false, onBack: () -> Unit) {
+fun HistoryScreen(viewModel: AppViewModel, editMode: Boolean = false, navController: androidx.navigation.NavController? = null, onBack: () -> Unit) {
     val isDark      by viewModel.isDarkTheme.collectAsState()
     val currentUser by viewModel.currentUser.collectAsState()
     val context     = LocalContext.current
     val fmt         = DateTimeFormatter.ofPattern("yyyy-MM-dd")
     val today       = LocalDate.now()
+    
 
     val bg      = if (isDark) NavyBackground else LightBackground
     val cardBg  = if (isDark) NavyCard       else LightCard
@@ -54,15 +57,21 @@ fun HistoryScreen(viewModel: AppViewModel, editMode: Boolean = false, onBack: ()
     var selectedCatIndex by remember { mutableIntStateOf(0) }
     var periodDays       by remember { mutableIntStateOf(30) }
     var isEditMode       by remember { mutableStateOf(editMode) }
+    var showPdfPicker    by remember { mutableStateOf(false) }
 
     val startDate = if (periodDays == 0) "2020-01-01" else today.minusDays(periodDays.toLong()).format(fmt)
-    val endDate   = today.format(fmt)
+    val endDate   = today.minusDays(1).format(fmt)
 
-    val recordCats by viewModel.repository_cats_record(currentUser).collectAsState(initial = emptyList())
-    val tasks      by viewModel.repository_tasks_range(currentUser, startDate, endDate).collectAsState(initial = emptyList())
+    val recordCats  by viewModel.repository_cats_record(currentUser).collectAsState(initial = emptyList())
+    val prepareCats by viewModel.prepareCategories.collectAsState()
+        val tasks      by viewModel.repository_tasks_range(currentUser, startDate, endDate).collectAsState(initial = emptyList())
     val planks     by viewModel.repository_planks_range(currentUser, startDate, endDate).collectAsState(initial = emptyList())
+    val buriedEntries by viewModel.buriedEntries.collectAsState()
+    var includeBuried by remember { mutableStateOf(true) }
+    val allPlanks  by viewModel.repository_planks_range(currentUser, "2020-01-01", today.format(fmt)).collectAsState(initial = emptyList())
     val prayers    by viewModel.repository_prayers_range(currentUser, startDate, endDate).collectAsState(initial = emptyList())
     val customs    by viewModel.repository_customs_range(currentUser, startDate, endDate).collectAsState(initial = emptyList())
+    val allCustoms by viewModel.repository_customs_range(currentUser, "2020-01-01", today.format(fmt)).collectAsState(initial = emptyList())
 
     val selectedCat = recordCats.getOrNull(selectedCatIndex)
 
@@ -72,13 +81,16 @@ fun HistoryScreen(viewModel: AppViewModel, editMode: Boolean = false, onBack: ()
                 title = { Text(if (isEditMode) "Edit History" else "History", color = textPri) },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null, tint = primary) } },
                 actions = {
+                    IconButton(onClick = { navController?.navigate(NavRoutes.DEAD_HABITS) }) {
+                        Icon(Icons.Default.FolderOff, null, tint = primary)
+                    }
                     IconButton(onClick = { isEditMode = !isEditMode }) {
                         Icon(if (isEditMode) Icons.Default.Visibility else Icons.Default.Edit, null, tint = primary)
                     }
                     IconButton(onClick = { exportCsv(context, tasks, planks, prayers, customs, recordCats, periodDays) }) {
                         Icon(Icons.Default.TableChart, null, tint = primary)
                     }
-                    IconButton(onClick = { exportPdf(context, tasks, planks, prayers, customs, recordCats, periodDays) }) {
+                    IconButton(onClick = { showPdfPicker = true }) {
                         Icon(Icons.Default.Print, null, tint = primary)
                     }
                 },
@@ -116,6 +128,17 @@ fun HistoryScreen(viewModel: AppViewModel, editMode: Boolean = false, onBack: ()
                 }
             }
 
+            if (isEditMode && buriedEntries.isNotEmpty()) {
+                Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Checkbox(checked = includeBuried, onCheckedChange = { includeBuried = it },
+                        colors = CheckboxDefaults.colors(checkedColor = primary),
+                        modifier = Modifier.size(20.dp))
+                    Text("Include buried habits in PDF export", color = textSec,
+                        style = MaterialTheme.typography.labelSmall)
+                }
+            }
             if (isEditMode) {
                 Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
                     .clip(RoundedCornerShape(8.dp)).background(primary.copy(alpha=0.1f)).padding(8.dp)) {
@@ -127,14 +150,88 @@ fun HistoryScreen(viewModel: AppViewModel, editMode: Boolean = false, onBack: ()
 
             when (selectedCat?.builtinType) {
                 "TASKS"   -> TaskHistoryList(tasks, isDark, isEditMode, viewModel, cardBg, textPri, textSec, textDis, doneClr)
-                "PLANK"   -> PlankHistoryList(planks, isDark, isEditMode, viewModel, cardBg, textPri, textSec, textDis, doneClr, primary)
+                "PLANK"   -> PlankHistoryList(allPlanks, isDark, isEditMode, viewModel, cardBg, textPri, textSec, textDis, doneClr, primary)
                 "PRAYERS" -> PrayerHistoryList(prayers, isDark, isEditMode, viewModel, cardBg, textPri, textSec, doneClr)
-                else      -> if (selectedCat != null)
-                    CustomHistoryList(selectedCat, customs.filter { it.categoryId == selectedCat.id },
+                else      -> if (selectedCat != null) {
+                    val prepPartnerHistory = prepareCats.firstOrNull { it.name == selectedCat.name }
+                    val catEntries = customs.filter { it.categoryId == selectedCat.id || it.categoryId == prepPartnerHistory?.id }
+                    val allCatEntries = allCustoms.filter { it.categoryId == selectedCat.id || it.categoryId == prepPartnerHistory?.id }
+                    if (selectedCat.frequency == "ONCE_DAILY" && selectedCat.builtinType.isEmpty()) {
+                        val streak = computeCustomStreak(allCatEntries)
+                        if (streak > 0 && allCatEntries.isNotEmpty()) {
+                            // Show streak card same as Plank
+                            Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
+                                .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                                .background(cardBg).padding(16.dp),
+                                contentAlignment = Alignment.Center) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text("$streak", color = primary, fontSize = 40.sp, fontWeight = FontWeight.Bold)
+                                    Text("day streak", color = textSec)
+                                }
+                            }
+                        }
+                    }
+                    CustomHistoryList(selectedCat, catEntries,
                         isDark, isEditMode, viewModel, cardBg, textPri, textSec, textDis, doneClr)
+                }
             }
         }
     }
+    if (showPdfPicker) {
+        PdfCategoryPickerDialog(
+            isDark = isDark, primary = primary, cats = recordCats,
+            onDismiss = { showPdfPicker = false },
+            onPick = { picked ->
+                if (picked == null) {
+                    exportPdf(context, tasks, allPlanks, prayers, customs, recordCats, periodDays,
+                        if (includeBuried) buriedEntries else emptyList())
+                } else {
+                    exportCategoryPdf(context, picked, tasks, allPlanks, prayers,
+                        customs.filter { it.categoryId == picked.id ||
+                            it.categoryId == prepareCats.firstOrNull { p -> p.name == picked.name }?.id },
+                        periodDays, if (includeBuried) buriedEntries else emptyList())
+                }
+            }
+        )
+    }
+}
+
+
+
+
+@Composable
+private fun PdfCategoryPickerDialog(
+    isDark: Boolean, primary: Color, cats: List<CategoryDefinition>,
+    onDismiss: () -> Unit, onPick: (CategoryDefinition?) -> Unit
+) {
+    val cardBg  = if (isDark) NavyCard      else LightCard
+    val textPri = if (isDark) TextPrimary   else LightTextPrimary
+    val textSec = if (isDark) TextSecondary else LightTextSecondary
+    AlertDialog(onDismissRequest = onDismiss, containerColor = cardBg,
+        title = { Text("Export PDF", color = primary) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.fillMaxWidth()) {
+                TextButton(onClick = { onPick(null); onDismiss() },
+                    modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.SelectAll, null, tint = primary, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("All Categories", color = primary,
+                        fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                }
+                HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
+                cats.forEach { cat ->
+                    TextButton(onClick = { onPick(cat); onDismiss() },
+                        modifier = Modifier.fillMaxWidth()) {
+                        Text("${cat.emoji} ${cat.name}", color = textPri,
+                            modifier = Modifier.weight(1f))
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = textSec) } }
+    )
 }
 
 @Composable
@@ -200,6 +297,13 @@ private fun PlankHistoryList(planks: List<PlankEntry>, isDark: Boolean, editMode
 @Composable
 private fun PrayerHistoryList(prayers: List<PrayerEntry>, isDark: Boolean, editMode: Boolean,
     viewModel: AppViewModel, cardBg: Color, textPri: Color, textSec: Color, doneClr: Color) {
+    if (editMode) {
+        val accent by viewModel.userAccentHex.collectAsState()
+        val primary = com.leapoffaith.app.ui.prepare.parseColor(accent)
+        AddMissingDateRow(primary, "+ Add a missing date") { date ->
+            viewModel.addMissingPrayerDay(date)
+        }
+    }
     val sorted = prayers.sortedByDescending { it.date }
     val names  = listOf("Fajr","Dhuhr","Asr","Maghrib","Isha")
     if (sorted.isEmpty()) { EmptyState(textSec, if (isDark) TextDisabled else LightTextDisabled); return }
@@ -235,6 +339,13 @@ private fun PrayerHistoryList(prayers: List<PrayerEntry>, isDark: Boolean, editM
 private fun CustomHistoryList(cat: CategoryDefinition, entries: List<CustomEntry>,
     isDark: Boolean, editMode: Boolean, viewModel: AppViewModel,
     cardBg: Color, textPri: Color, textSec: Color, textDis: Color, doneClr: Color) {
+    if (editMode && cat.frequency == "ONCE_DAILY") {
+        val accent by viewModel.userAccentHex.collectAsState()
+        val primary = com.leapoffaith.app.ui.prepare.parseColor(accent)
+        AddMissingDateRow(primary, "+ Add a missing date") { date ->
+            viewModel.addMissingCustomDay(cat.id, date)
+        }
+    }
     val byDate = entries.groupBy { it.date }.entries.sortedByDescending { it.key }
     if (byDate.isEmpty()) { EmptyState(textSec, textDis); return }
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -276,15 +387,98 @@ private fun fmtDate(d: String) = try {
         .format(DateTimeFormatter.ofPattern("EEE, MMM d"))
 } catch (e: Exception) { d }
 
-private fun computeStreak(sorted: List<PlankEntry>): Int {
-    var streak = 0; var expected = LocalDate.now()
+private fun computeCustomStreak(entries: List<CustomEntry>): Int {
     val fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+    val sorted = entries.filter { it.isDone && it.subItemKey.isEmpty() }.sortedByDescending { it.date }
+    val today = LocalDate.now()
+    var expected = if (sorted.any { it.date == today.format(fmt) }) today else today.minusDays(1)
+    var streak = 0
     for (e in sorted) {
-        if (!e.completed) continue
-        val d = LocalDate.parse(e.date, fmt)
+        val d = try { LocalDate.parse(e.date, fmt) } catch (_: Exception) { continue }
         if (d == expected) { streak++; expected = expected.minusDays(1) } else if (d.isBefore(expected)) break
     }
     return streak
+}
+
+private fun computeStreak(sorted: List<PlankEntry>): Int {
+    var streak = 0
+    val fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+    val today = LocalDate.now()
+    // Allow streak to start from today OR yesterday (in case today not yet done)
+    var expected = if (sorted.any { it.date == today.format(fmt) && it.completed }) today
+                   else today.minusDays(1)
+    for (e in sorted) {
+        if (!e.completed) continue
+        val d = LocalDate.parse(e.date, fmt)
+        if (d == expected) { streak++; expected = expected.minusDays(1) }
+        else if (d.isBefore(expected)) break
+    }
+    return streak
+}
+
+private fun exportCategoryPdf(context: android.content.Context,
+    cat: com.leapoffaith.app.data.entities.CategoryDefinition?,
+    tasks: List<Task>, planks: List<PlankEntry>, prayers: List<PrayerEntry>,
+    catEntries: List<CustomEntry>, periodDays: Int, buriedEntries: List<CustomEntry> = emptyList()) {
+    if (cat == null) return
+    val fmt   = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+    val today = LocalDate.now()
+    val label = if (periodDays == 0) "All Time" else "Last $periodDays Days"
+    val start = if (periodDays == 0) LocalDate.of(2020,1,1) else today.minusDays(periodDays.toLong())
+    val rows  = StringBuilder()
+    var d = today.minusDays(1)
+    while (!d.isBefore(start)) {
+        val ds = d.format(fmt)
+        val display = d.format(DateTimeFormatter.ofPattern("EEE MMM d"))
+        when (cat.builtinType) {
+            "TASKS" -> {
+                val dt = tasks.filter { it.date == ds }
+                if (dt.isNotEmpty()) rows.append("<tr><td>$display</td><td>${dt.count{it.isCompleted}}/${dt.size}</td></tr>")
+            }
+            "PLANK" -> {
+                val pl = planks.firstOrNull { it.date == ds }
+                if (pl != null) rows.append("<tr><td>$display</td><td>${if(pl.completed)"Done" else "Missed"}</td></tr>")
+            }
+            "PRAYERS" -> {
+                val pr = prayers.firstOrNull { it.date == ds }
+                if (pr != null) {
+                    val c = listOf(pr.fajr,pr.dhuhr,pr.asr,pr.maghrib,pr.isha).count{it}
+                    rows.append("<tr><td>$display</td><td>$c/5</td></tr>")
+                }
+            }
+            else -> {
+                val e = catEntries.filter { it.date == ds && it.isDone }
+                if (e.isNotEmpty()) rows.append("<tr><td>$display</td><td>${e.size} done</td></tr>")
+            }
+        }
+        d = d.minusDays(1)
+    }
+    val html = """<html><head><style>
+        body{font-family:sans-serif;padding:16px}h2{color:#2D6A4F}
+        table{width:100%;border-collapse:collapse;font-size:12px}
+        th{background:#E8F5E9;color:#2D6A4F;padding:8px;text-align:left}
+        td{padding:6px;border-bottom:1px solid #E8F5E9}
+    </style></head><body>
+    <h2>${cat.emoji} ${cat.name} — $label</h2>
+    <table><tr><th>Date</th><th>Result</th></tr>${rows}</table>
+    ${if (buriedEntries.isNotEmpty()) """
+    <h3 style='color:#888;margin-top:20px'>No Longer Tracked</h3>
+    <table><tr><th>Habit</th><th>Times Done</th><th>Last Done</th></tr>
+    ${buriedEntries.groupBy { e -> e.subItemKey.ifEmpty { e.notes.ifEmpty { "Entry" } } }
+        .entries.joinToString("") { (label, entries) ->
+        "<tr><td>$label</td><td>${entries.size}</td><td>${entries.sortedByDescending{it.date}.firstOrNull()?.date?:"-"}</td></tr>" }}
+    </table>""" else ""}
+    </body></html>"""
+    val wv = android.webkit.WebView(context)
+    wv.webViewClient = object : android.webkit.WebViewClient() {
+        override fun onPageFinished(v: android.webkit.WebView, url: String) {
+            val pm = context.getSystemService(android.content.Context.PRINT_SERVICE) as android.print.PrintManager
+            pm.print("LoF_${cat.name}_$label", v.createPrintDocumentAdapter("LoF"),
+                android.print.PrintAttributes.Builder()
+                    .setMediaSize(android.print.PrintAttributes.MediaSize.ISO_A4).build())
+        }
+    }
+    wv.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
 }
 
 private fun exportCsv(context: Context, tasks: List<Task>, planks: List<PlankEntry>,
@@ -326,7 +520,8 @@ private fun exportCsv(context: Context, tasks: List<Task>, planks: List<PlankEnt
 }
 
 private fun exportPdf(context: Context, tasks: List<Task>, planks: List<PlankEntry>,
-    prayers: List<PrayerEntry>, customs: List<CustomEntry>, cats: List<CategoryDefinition>, periodDays: Int) {
+    prayers: List<PrayerEntry>, customs: List<CustomEntry>, cats: List<CategoryDefinition>, periodDays: Int,
+    buriedEntries: List<CustomEntry> = emptyList()) {
     val fmt   = DateTimeFormatter.ofPattern("yyyy-MM-dd")
     val today = LocalDate.now()
     val label = if (periodDays == 0) "All Time" else "Last $periodDays Days"
@@ -370,3 +565,42 @@ private fun exportPdf(context: Context, tasks: List<Task>, planks: List<PlankEnt
     }
     wv.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
 }
+
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+fun AddMissingDateRow(primary: Color, label: String, onPick: (String) -> Unit) {
+    var show by remember { mutableStateOf(false) }
+    androidx.compose.material3.TextButton(
+        onClick = { show = true },
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        androidx.compose.material3.Icon(
+            androidx.compose.material.icons.Icons.Default.AddCircleOutline, null,
+            tint = primary, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(label, color = primary, style = MaterialTheme.typography.labelMedium)
+    }
+    if (show) {
+        val state = androidx.compose.material3.rememberDatePickerState()
+        androidx.compose.material3.DatePickerDialog(
+            onDismissRequest = { show = false },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    state.selectedDateMillis?.let { ms ->
+                        val d = java.time.Instant.ofEpochMilli(ms)
+                            .atZone(java.time.ZoneOffset.UTC).toLocalDate()
+                            .format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+                        onPick(d)
+                    }
+                    show = false
+                }) { Text("Add", color = primary) }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { show = false }) { Text("Cancel") }
+            }
+        ) {
+            androidx.compose.material3.DatePicker(state = state)
+        }
+    }
+}
+

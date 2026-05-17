@@ -5,4 +5,6 @@
     <string name="snapshot_widget_description">Shows today progress across all categories</string>
     <string name="mini_tracker_name">Mini Tracker</string>
     <string name="mini_tracker_description">Weekly tracker for one category</string>
+    <string name="affirmations_widget_name">Daily Affirmations</string>
+    <string name="affirmations_widget_description">Opens your daily affirmations</string>
 </resources>

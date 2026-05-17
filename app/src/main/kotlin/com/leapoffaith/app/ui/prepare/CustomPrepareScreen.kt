@@ -117,6 +117,13 @@ private fun DailyPrepareContent(
                 }
             }
         }
+        val prevLabel = if (targetDate == java.time.LocalDate.now()) "yesterday" else "today"
+        TextButton(onClick = { viewModel.reimportPreviousPeriod(categoryId, if (targetDate == java.time.LocalDate.now()) "TODAY" else "NEXT_DAY") },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+            Icon(Icons.Default.Refresh, null, modifier = Modifier.size(14.dp), tint = textSec)
+            Spacer(Modifier.width(4.dp))
+            Text("Re-import from $prevLabel", color = textSec, style = MaterialTheme.typography.labelSmall)
+        }
         Button(onClick = { showSheet = true }, modifier = Modifier.fillMaxWidth().padding(16.dp),
             colors = ButtonDefaults.buttonColors(containerColor = primary,
                 contentColor = if (isDark) NavyBackground else LightCard)) {
@@ -262,6 +269,14 @@ private fun WeeklyPrepareContent(
                                         Text("%02d:00".format(addHour), color = primary, style = MaterialTheme.typography.labelSmall)
                                     }
                                 }
+                            }
+                        }
+                        if (i == 0 && dayItems.isEmpty()) {
+                            TextButton(onClick = { viewModel.reimportPreviousPeriod(categoryId, "NEXT_WEEK") },
+                                colors = ButtonDefaults.textButtonColors(contentColor = primary.copy(alpha=0.7f))) {
+                                Icon(Icons.Default.Refresh, null, modifier = Modifier.size(14.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Re-import last week", style = MaterialTheme.typography.labelSmall)
                             }
                         }
                         TextButton(onClick = { showAddDay = if (showAddDay == i) -1 else i; addText = "" },

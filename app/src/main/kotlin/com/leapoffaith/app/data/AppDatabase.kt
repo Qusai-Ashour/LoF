@@ -9,7 +9,7 @@ import com.leapoffaith.app.data.entities.*
 @Database(
     entities = [Task::class, PlankEntry::class, MealEntry::class,
                 PrayerEntry::class, CategoryDefinition::class, CustomEntry::class],
-    version = 6, exportSchema = false
+    version = 7, exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun taskDao(): TaskDao

@@ -14,8 +14,11 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.navigation.*
 import androidx.navigation.compose.*
 import com.leapoffaith.app.ui.calendar.CalendarScreen
+import com.leapoffaith.app.ui.affirmations.AffirmationsScreen
+import com.leapoffaith.app.ui.history.DeadHabitsScreen
 import com.leapoffaith.app.ui.history.HistoryScreen
 import com.leapoffaith.app.ui.hub.MainHubScreen
+import com.leapoffaith.app.ui.gym.GymSplitScreen
 import com.leapoffaith.app.ui.mealplan.WeekMealPlanScreen
 import com.leapoffaith.app.ui.plank.PlankScreen
 import com.leapoffaith.app.ui.prayers.PrayersScreen
@@ -31,7 +34,8 @@ import com.leapoffaith.app.ui.theme.*
 import com.leapoffaith.app.viewmodel.AppViewModel
 
 @Composable
-fun NavGraph(navController: NavHostController, viewModel: AppViewModel) {
+fun NavGraph(navController: NavHostController, viewModel: AppViewModel, startRoute: String? = null) {
+    var pendingStartRoute by remember { mutableStateOf(startRoute) }
     val isLoaded    by viewModel.isLoaded.collectAsState()
     val currentUser by viewModel.currentUser.collectAsState()
     val isDark      by viewModel.isDarkTheme.collectAsState()
@@ -64,18 +68,40 @@ fun NavGraph(navController: NavHostController, viewModel: AppViewModel) {
                 navController.navigate(NavRoutes.HOME) { popUpTo(NavRoutes.WHO_ARE_YOU) { inclusive = true } }
             })
         }
-        composable(NavRoutes.HOME)           { MainHubScreen(viewModel, navController) }
+        composable(NavRoutes.HOME)           {
+            LaunchedEffect(pendingStartRoute) {
+                if (pendingStartRoute == "affirmations") {
+                    pendingStartRoute = null
+                    navController.navigate(NavRoutes.AFFIRMATIONS) {
+                        popUpTo(NavRoutes.HOME) { inclusive = false }
+                    }
+                }
+            }
+            if (pendingStartRoute != null) {
+                val bgClr = if (isDark) androidx.compose.ui.graphics.Color(0xFF0D1B2A)
+                            else androidx.compose.ui.graphics.Color(0xFFF0F4F1)
+                androidx.compose.foundation.layout.Box(
+                    modifier = androidx.compose.ui.Modifier.fillMaxSize()
+                        .background(bgClr)
+                )
+            } else {
+                MainHubScreen(viewModel, navController)
+            }
+        }
         composable(NavRoutes.VISUAL_TRACKER) { VisualTrackerScreen(viewModel) { navController.popBackStack() } }
         composable(NavRoutes.PREPARE)        { PrepareScreen(viewModel, navController) { navController.popBackStack() } }
         composable(NavRoutes.RECORD)         { RecordProgressScreen(viewModel, navController) { navController.popBackStack() } }
         composable(NavRoutes.PLANK)          { PlankScreen(viewModel) { navController.popBackStack() } }
         composable(NavRoutes.PRAYERS)        { PrayersScreen(viewModel) { navController.popBackStack() } }
         composable(NavRoutes.TODAY_TASKS)    { TodayScreen(viewModel) { navController.popBackStack() } }
-        composable(NavRoutes.HISTORY)        { HistoryScreen(viewModel, editMode = false) { navController.popBackStack() } }
-        composable(NavRoutes.HISTORY_EDIT)   { HistoryScreen(viewModel, editMode = true) { navController.popBackStack() } }
+        composable(NavRoutes.HISTORY)        { HistoryScreen(viewModel, editMode = false, navController = navController) { navController.popBackStack() } }
+        composable(NavRoutes.AFFIRMATIONS)   { AffirmationsScreen(viewModel) { navController.popBackStack() } }
+        composable(NavRoutes.DEAD_HABITS)    { DeadHabitsScreen(viewModel) { navController.popBackStack() } }
+        composable(NavRoutes.HISTORY_EDIT)   { HistoryScreen(viewModel, editMode = true, navController = navController) { navController.popBackStack() } }
         composable(NavRoutes.CALENDAR)       { CalendarScreen(viewModel) { navController.popBackStack() } }
         composable(NavRoutes.TOMORROW_PLAN)  { TomorrowPlanScreen(viewModel) { navController.popBackStack() } }
         composable(NavRoutes.WEEK_MEAL_PLAN) { WeekMealPlanScreen(viewModel) { navController.popBackStack() } }
+        composable(NavRoutes.GYM_SPLIT) { GymSplitScreen(viewModel) { navController.popBackStack() } }
         composable(NavRoutes.RECORD_CUSTOM,
             arguments = listOf(navArgument("categoryId") { type = NavType.LongType })
         ) { bs -> RecordCustomCategoryScreen(viewModel, bs.arguments?.getLong("categoryId") ?: 0L) { navController.popBackStack() } }
